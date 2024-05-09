@@ -1,4 +1,4 @@
-FROM node:20-slim AS base
+FROM node:20-alpine AS base
 
 ## Sharp dependencies, copy all the files for production
 FROM base AS sharp
@@ -22,7 +22,7 @@ COPY package.json ./
 COPY .npmrc ./
 
 # If you want to build docker in China
-# RUN npm config set registry https://registry.npmmirror.com/
+RUN npm config set registry https://registry.npmmirror.com/
 RUN pnpm i
 
 COPY . .
@@ -54,6 +54,8 @@ RUN npm run build:docker
 FROM base AS runner
 WORKDIR /app
 
+RUN apk add proxychains-ng
+
 ENV NODE_ENV production
 
 RUN addgroup --system --gid 1001 nodejs
@@ -78,6 +80,8 @@ EXPOSE 3210
 # set hostname to localhost
 ENV HOSTNAME "0.0.0.0"
 ENV PORT=3210
+
+ENV PROXY_URL=""
 
 # General Variables
 ENV ACCESS_CODE ""
@@ -132,4 +136,25 @@ ENV MINIMAX_API_KEY ""
 # DeepSeek
 ENV DEEPSEEK_API_KEY ""
 
-CMD ["node", "server.js"]
+# CMD ["node", "server.js"]
+
+CMD if [ -n "$PROXY_URL" ]; then \
+        export HOSTNAME="0.0.0.0"; \
+        protocol=$(echo $PROXY_URL | cut -d: -f1); \
+        host=$(echo $PROXY_URL | cut -d/ -f3 | cut -d: -f1); \
+        port=$(echo $PROXY_URL | cut -d: -f3); \
+        conf=/tmp/proxychains.conf; \
+        echo "strict_chain" > $conf; \
+        echo "proxy_dns" >> $conf; \
+        echo "remote_dns_subnet 224" >> $conf; \
+        echo "tcp_read_time_out 15000" >> $conf; \
+        echo "tcp_connect_time_out 8000" >> $conf; \
+        echo "localnet 127.0.0.0/255.0.0.0" >> $conf; \
+        echo "localnet ::1/128" >> $conf; \
+        echo "[ProxyList]" >> $conf; \
+        echo "$protocol $host $port" >> $conf; \
+        cat $conf; \
+        proxychains -f $conf node server.js; \
+    else \
+        node server.js; \
+    fi
